@@ -2,7 +2,7 @@ package main
 
 import (
 	"bufio"
-	"fmt"
+	"context"
 	"log"
 	"net"
 	"net/http"
@@ -11,9 +11,7 @@ import (
 	"strings"
 )
 
-const (
-	PORT = ":8080"
-)
+type PathParamKey string
 
 type Handler func(r *http.Request) string
 
@@ -28,51 +26,59 @@ type Server struct {
 	Routes []*Route
 }
 
+const (
+	Port                   = ":8080"
+	TmpDir                 = "tmp"
+	PathParam PathParamKey = "pathParams"
+)
+
+// AddRoute registers a new URL on the server
 func (s *Server) AddRoute(method, path string, handler Handler) {
 	newRoute := &Route{
 		handler: handler,
 		method:  method,
 		parts:   strings.Split(strings.Trim(path, "/"), "/"),
 	}
-
 	s.Routes = append(s.Routes, newRoute)
 }
 
-func (s *Server) DetermineHandler(method, path string) Handler {
-	// first determine which routes match the provided method
-	// we will filter down to those routes
-
-	var handler Handler
+// DetermineHandler function determines the correct handler to handle the request
+// this is done by validating that the request method matches the registered routes
+// request method and matches every part of the registered routes URL (excluding placeholder values for path variables)
+func (s *Server) DetermineHandler(req *http.Request) Handler {
+	method := req.Method
+	path := req.URL.Path
+	pathParts := strings.Split(strings.Trim(path, "/"), "/")
 	routes := s.Routes
 
 	for _, route := range routes {
-		if method == route.method {
+		if method != route.method {
+			continue
+		}
 
-			// determine which parts of the route match up with the provided path.
-			// first thing we want to do is check if the slices are of equal length
-			// this avoids index errors in the future checks
-			pathParts := strings.Split(strings.Trim(path, "/"), "/")
+		if len(pathParts) != len(route.parts) {
+			continue
+		}
 
-			if len(pathParts) == len(route.parts) {
+		match := true
+		pathParams := make(map[string]string)
 
-				// if slices are equal, check the values at each index for both slices is the same
-				// IF the value does not start with ":" in the route.parts slice
-				match := true
-				for i, e := range pathParts {
-					if !strings.HasPrefix(route.parts[i], ":") && e != route.parts[i] {
-						match = false
-						break
-					}
-				}
-				if match {
-					handler = route.handler
-					break
-				}
-
+		for i, routePart := range route.parts {
+			if strings.HasPrefix(routePart, ":") {
+				n := strings.TrimPrefix(routePart, ":")
+				pathParams[n] = pathParts[i]
+			} else if routePart != pathParts[i] {
+				match = false
+				break
 			}
 		}
+		if match {
+			ctx := context.WithValue(req.Context(), PathParam, pathParams)
+			*req = *req.WithContext(ctx)
+			return route.handler
+		}
 	}
-	return handler
+	return nil
 }
 
 func main() {
@@ -86,13 +92,13 @@ func main() {
 	s.AddRoute("GET", "/user-agent", s.UserAgentHandler)
 
 	// first create TCP listener
-	listener, err := net.Listen("tcp", PORT)
+	listener, err := net.Listen("tcp", Port)
 	if err != nil {
 		panic(err) // panicking here because code can't run without listener
 	}
 	defer listener.Close()
 
-	s.Logger.Printf("Listening on %s", PORT)
+	s.Logger.Printf("Listening on %s", Port)
 
 	for {
 		c, err := listener.Accept()
@@ -111,25 +117,23 @@ func (s *Server) HandleConnection(conn net.Conn) {
 	req, err := http.ReadRequest(bufio.NewReader(conn))
 	if err != nil {
 		s.Logger.Printf("Error reading request: %v\n", err)
-		_, err = conn.Write([]byte("HTTP/1.1 400 Bad Request\r\n\r\n"))
-		if err != nil {
-			s.Logger.Printf("Error writing response: %v\n", err)
-		}
+		s.WriteResponse(conn, "HTTP/1.1 400 Bad Request\r\n\r\n")
 		return
 	}
 
-	handler := s.DetermineHandler(req.Method, req.URL.Path)
+	handler := s.DetermineHandler(req)
 	if handler == nil {
 		s.Logger.Printf("No handler found for request with path %s\n", req.URL.Path)
-		_, err = conn.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
-		if err != nil {
-			s.Logger.Printf("Error writing response: %v\n", err)
-		}
+		s.WriteResponse(conn, "HTTP/1.1 404 Not Found\r\n\r\n")
 		return
 	}
 
-	res := handler(req)
-	_, err = conn.Write([]byte(res))
+	s.WriteResponse(conn, handler(req))
+	return
+}
+
+func (s *Server) WriteResponse(conn net.Conn, res string) {
+	_, err := conn.Write([]byte(res))
 	if err != nil {
 		s.Logger.Printf("Error writing response: %v\n", err)
 	}
@@ -162,7 +166,7 @@ func (s *Server) UserAgentHandler(r *http.Request) string {
 }
 
 func (s *Server) FilesHandler(r *http.Request) string {
-	f := fmt.Sprintf("tmp/%s", strings.Split(strings.Trim(r.URL.Path, "/"), "/")[1])
+	f := TmpDir + "/" + strings.Split(strings.Trim(r.URL.Path, "/"), "/")[1]
 	data, err := os.ReadFile(f)
 	if err != nil {
 		s.Logger.Printf("error reading file: %v\n", err)
