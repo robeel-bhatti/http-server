@@ -28,7 +28,7 @@ type Server struct {
 
 const (
 	Port                   = ":8080"
-	TmpDir                 = "tmp"
+	TmpDir                 = "tmp/"
 	PathParam PathParamKey = "pathParams"
 )
 
@@ -145,8 +145,7 @@ func (s *Server) DefaultHandler(r *http.Request) string {
 
 // EchoHandler handles requests at /echo/{value}
 func (s *Server) EchoHandler(r *http.Request) string {
-	pv := strings.Split(strings.Trim(r.URL.Path, "/"), "/")[1]
-
+	pv := r.Context().Value(PathParam).(map[string]string)["name"]
 	resp := "HTTP/1.1 200 OK\r\n" +
 		"Content-Type: text/plain\r\n" +
 		"Content-Length: " + strconv.Itoa(len(pv)) + "\r\n" +
@@ -166,7 +165,9 @@ func (s *Server) UserAgentHandler(r *http.Request) string {
 }
 
 func (s *Server) FilesHandler(r *http.Request) string {
-	f := TmpDir + "/" + strings.Split(strings.Trim(r.URL.Path, "/"), "/")[1]
+	val := r.Context().Value(PathParam).(map[string]string)
+	f := TmpDir + val["name"]
+
 	data, err := os.ReadFile(f)
 	if err != nil {
 		s.Logger.Printf("error reading file: %v\n", err)
