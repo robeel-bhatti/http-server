@@ -27,10 +27,83 @@ type Server struct {
 }
 
 const (
-	Port                   = ":8080"
-	TmpDir                 = "tmp/"
-	PathParam PathParamKey = "pathParams"
+	Port                     = ":8080"
+	Protocol                 = "HTTP/1.1"
+	TmpDir                   = "tmp/"
+	TextPlain                = "text/plain"
+	OctetStream              = "application/octet-stream"
+	PathParam   PathParamKey = "pathParams"
 )
+
+func main() {
+
+	logger := log.New(os.Stdout, "[HTTP-SERVER] ", log.LstdFlags)
+	s := &Server{Logger: logger}
+
+	s.AddRoute("GET", "/", s.DefaultHandler)
+	s.AddRoute("GET", "/echo/:name", s.EchoHandler)
+	s.AddRoute("GET", "/files/:name", s.FilesHandler)
+	s.AddRoute("GET", "/user-agent", s.UserAgentHandler)
+
+	// first create TCP listener
+	listener, err := net.Listen("tcp", Port)
+	if err != nil {
+		panic(err) // panicking here because code can't run without listener
+	}
+	defer listener.Close()
+
+	s.Logger.Printf("Listening on %s", Port)
+
+	for {
+		c, err := listener.Accept()
+		if err != nil {
+			s.Logger.Printf("Error accepting request: %v\n", err)
+			continue // this time just log and continue, don't stop server here
+		}
+
+		go s.HandleConnection(c)
+	}
+}
+
+func (s *Server) HandleConnection(conn net.Conn) {
+	defer conn.Close()
+
+	req, err := http.ReadRequest(bufio.NewReader(conn))
+	if err != nil {
+		s.Logger.Printf("Error reading request: %v\n", err)
+		s.WriteResponse(conn, s.BuildResponse(400, TextPlain, "could not read request"))
+		return
+	}
+
+	handler := s.DetermineHandler(req)
+	if handler == nil {
+		s.Logger.Printf("No handler found for request with path %s\n", req.URL.Path)
+		s.WriteResponse(conn, s.BuildResponse(404, TextPlain, "the request path is not supported"))
+		return
+	}
+
+	s.WriteResponse(conn, handler(req))
+	return
+}
+
+func (s *Server) BuildResponse(sc int, ct, body string) string {
+	var sb strings.Builder
+	sb.WriteString(Protocol + " " + strconv.Itoa(sc) + " " + http.StatusText(sc))
+	sb.WriteString("\r\n")
+	sb.WriteString("Content-Type: " + ct)
+	sb.WriteString("\r\n")
+	sb.WriteString("Content-Length: " + strconv.Itoa(len(body)))
+	sb.WriteString("\r\n\r\n")
+	sb.WriteString(body)
+	return sb.String()
+}
+
+func (s *Server) WriteResponse(conn net.Conn, res string) {
+	_, err := conn.Write([]byte(res))
+	if err != nil {
+		s.Logger.Printf("Error writing response: %v\n", err)
+	}
+}
 
 // AddRoute registers a new URL on the server
 func (s *Server) AddRoute(method, path string, handler Handler) {
@@ -81,87 +154,19 @@ func (s *Server) DetermineHandler(req *http.Request) Handler {
 	return nil
 }
 
-func main() {
-
-	logger := log.New(os.Stdout, "[HTTP-SERVER] ", log.LstdFlags)
-	s := &Server{Logger: logger}
-
-	s.AddRoute("GET", "/", s.DefaultHandler)
-	s.AddRoute("GET", "/echo/:name", s.EchoHandler)
-	s.AddRoute("GET", "/files/:name", s.FilesHandler)
-	s.AddRoute("GET", "/user-agent", s.UserAgentHandler)
-
-	// first create TCP listener
-	listener, err := net.Listen("tcp", Port)
-	if err != nil {
-		panic(err) // panicking here because code can't run without listener
-	}
-	defer listener.Close()
-
-	s.Logger.Printf("Listening on %s", Port)
-
-	for {
-		c, err := listener.Accept()
-		if err != nil {
-			s.Logger.Printf("Error accepting request: %v\n", err)
-			continue // this time just log and continue, don't stop server here
-		}
-
-		go s.HandleConnection(c)
-	}
-}
-
-func (s *Server) HandleConnection(conn net.Conn) {
-	defer conn.Close()
-
-	req, err := http.ReadRequest(bufio.NewReader(conn))
-	if err != nil {
-		s.Logger.Printf("Error reading request: %v\n", err)
-		s.WriteResponse(conn, "HTTP/1.1 400 Bad Request\r\n\r\n")
-		return
-	}
-
-	handler := s.DetermineHandler(req)
-	if handler == nil {
-		s.Logger.Printf("No handler found for request with path %s\n", req.URL.Path)
-		s.WriteResponse(conn, "HTTP/1.1 404 Not Found\r\n\r\n")
-		return
-	}
-
-	s.WriteResponse(conn, handler(req))
-	return
-}
-
-func (s *Server) WriteResponse(conn net.Conn, res string) {
-	_, err := conn.Write([]byte(res))
-	if err != nil {
-		s.Logger.Printf("Error writing response: %v\n", err)
-	}
-}
-
 func (s *Server) DefaultHandler(r *http.Request) string {
-	return "HTTP/1.1 200 OK\r\n\r\n"
+	return s.BuildResponse(200, TextPlain, "")
 }
 
 // EchoHandler handles requests at /echo/{value}
 func (s *Server) EchoHandler(r *http.Request) string {
 	pv := r.Context().Value(PathParam).(map[string]string)["name"]
-	resp := "HTTP/1.1 200 OK\r\n" +
-		"Content-Type: text/plain\r\n" +
-		"Content-Length: " + strconv.Itoa(len(pv)) + "\r\n" +
-		"\r\n" +
-		pv
-	return resp
+	return s.BuildResponse(200, TextPlain, pv)
 }
 
 func (s *Server) UserAgentHandler(r *http.Request) string {
 	h := r.Header.Get("User-Agent")
-	resp := "HTTP/1.1 200 OK\r\n" +
-		"Content-Type: text/plain\r\n" +
-		"Content-Length: " + strconv.Itoa(len(h)) + "\r\n" +
-		"\r\n" +
-		h
-	return resp
+	return s.BuildResponse(200, TextPlain, h)
 }
 
 func (s *Server) FilesHandler(r *http.Request) string {
@@ -170,15 +175,9 @@ func (s *Server) FilesHandler(r *http.Request) string {
 
 	data, err := os.ReadFile(f)
 	if err != nil {
-		s.Logger.Printf("error reading file: %v\n", err)
-		return "HTTP/1.1 404 Not Found\r\n\r\n"
+		s.Logger.Printf("error reading file at path %s: %v\n", f, err)
+		return s.BuildResponse(404, TextPlain, "the requested file was not found")
 	}
 
-	resp := "HTTP/1.1 200 OK\r\n" +
-		"Content-Type: text/plain\r\n" +
-		"Content-Length: " + strconv.Itoa(len(string(data))) + "\r\n" +
-		"\r\n" +
-		string(data)
-
-	return resp
+	return s.BuildResponse(200, OctetStream, string(data))
 }
