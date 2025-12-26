@@ -43,6 +43,7 @@ func main() {
 	s.AddRoute("GET", "/", s.DefaultHandler)
 	s.AddRoute("GET", "/echo/:name", s.EchoHandler)
 	s.AddRoute("GET", "/files/:name", s.FilesHandler)
+	s.AddRoute("POST", "/files/:name", s.FilesHandler)
 	s.AddRoute("GET", "/user-agent", s.UserAgentHandler)
 
 	// first create TCP listener
@@ -170,8 +171,18 @@ func (s *Server) UserAgentHandler(r *http.Request) string {
 }
 
 func (s *Server) FilesHandler(r *http.Request) string {
+	sc := 200
 	val := r.Context().Value(PathParam).(map[string]string)
 	f := TmpDir + val["name"]
+
+	if r.Method == "POST" {
+		err := os.WriteFile(f, []byte(val["name"]), 0644)
+		if err != nil {
+			s.Logger.Printf("error writing file at path %s: %v\n", f, err)
+			return s.BuildResponse(500, TextPlain, "the requested file was not created")
+		}
+		sc = 201
+	}
 
 	data, err := os.ReadFile(f)
 	if err != nil {
@@ -179,5 +190,5 @@ func (s *Server) FilesHandler(r *http.Request) string {
 		return s.BuildResponse(404, TextPlain, "the requested file was not found")
 	}
 
-	return s.BuildResponse(200, OctetStream, string(data))
+	return s.BuildResponse(sc, OctetStream, string(data))
 }
