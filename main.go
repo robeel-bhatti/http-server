@@ -2,11 +2,14 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"log"
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -46,10 +49,9 @@ func main() {
 	s.AddRoute("POST", "/files/:name", s.FilesHandler)
 	s.AddRoute("GET", "/user-agent", s.UserAgentHandler)
 
-	// first create TCP listener
 	listener, err := net.Listen("tcp", Port)
 	if err != nil {
-		panic(err) // panicking here because code can't run without listener
+		panic(err) // panicking here because code can't run without TCP listener
 	}
 	defer listener.Close()
 
@@ -72,14 +74,14 @@ func (s *Server) HandleConnection(conn net.Conn) {
 	req, err := http.ReadRequest(bufio.NewReader(conn))
 	if err != nil {
 		s.Logger.Printf("Error reading request: %v\n", err)
-		s.WriteResponse(conn, s.BuildResponse(400, TextPlain, "could not read request"))
+		s.WriteResponse(conn, s.BuildResponse(400, TextPlain, "", "could not read request"))
 		return
 	}
 
 	handler := s.DetermineHandler(req)
 	if handler == nil {
 		s.Logger.Printf("No handler found for request with path %s\n", req.URL.Path)
-		s.WriteResponse(conn, s.BuildResponse(404, TextPlain, "the request path is not supported"))
+		s.WriteResponse(conn, s.BuildResponse(404, TextPlain, "", "the request path is not supported"))
 		return
 	}
 
@@ -87,15 +89,30 @@ func (s *Server) HandleConnection(conn net.Conn) {
 	return
 }
 
-func (s *Server) BuildResponse(sc int, ct, body string) string {
+func (s *Server) BuildResponse(sc int, ct, ce, body string) string {
 	var sb strings.Builder
 	sb.WriteString(Protocol + " " + strconv.Itoa(sc) + " " + http.StatusText(sc))
 	sb.WriteString("\r\n")
 	sb.WriteString("Content-Type: " + ct)
 	sb.WriteString("\r\n")
-	sb.WriteString("Content-Length: " + strconv.Itoa(len(body)))
-	sb.WriteString("\r\n\r\n")
-	sb.WriteString(body)
+
+	if ce == "gzip" {
+		var buf bytes.Buffer
+		w := gzip.NewWriter(&buf)
+		w.Write([]byte(body)) // write gzipped data to the buffer
+		w.Close()
+		sb.WriteString("Content-Length: " + strconv.Itoa(buf.Len()))
+		sb.WriteString("\r\n")
+		sb.WriteString("Content-Encoding: " + ce)
+		sb.WriteString("\r\n\r\n")
+		sb.WriteString(buf.String()) // take compressed data from buffer and write it to the response
+
+	} else {
+		sb.WriteString("Content-Length: " + strconv.Itoa(len(body)))
+		sb.WriteString("\r\n\r\n")
+		sb.WriteString(body)
+	}
+
 	return sb.String()
 }
 
@@ -156,39 +173,53 @@ func (s *Server) DetermineHandler(req *http.Request) Handler {
 }
 
 func (s *Server) DefaultHandler(r *http.Request) string {
-	return s.BuildResponse(200, TextPlain, "")
+	return s.BuildResponse(200, TextPlain, "", "")
 }
 
-// EchoHandler handles requests at /echo/{value}
 func (s *Server) EchoHandler(r *http.Request) string {
 	pv := r.Context().Value(PathParam).(map[string]string)["name"]
-	return s.BuildResponse(200, TextPlain, pv)
+
+	var ce string
+	if r.Header.Get("Accept-Encoding") != "" {
+		ae := r.Header.Get("Accept-Encoding")
+		aeList := strings.Split(ae, ", ")
+		for _, scheme := range aeList {
+			if slices.Contains(s.getCompressionSchemes(), scheme) {
+				ce = scheme
+				break
+			}
+		}
+	}
+	return s.BuildResponse(200, TextPlain, ce, pv)
 }
 
 func (s *Server) UserAgentHandler(r *http.Request) string {
-	h := r.Header.Get("User-Agent")
-	return s.BuildResponse(200, TextPlain, h)
+	return s.BuildResponse(200, TextPlain, "", r.Header.Get("User-Agent"))
 }
 
 func (s *Server) FilesHandler(r *http.Request) string {
-	sc := 200
-	val := r.Context().Value(PathParam).(map[string]string)
-	f := TmpDir + val["name"]
+	code := 200
+	pathVar := r.Context().Value(PathParam).(map[string]string)["name"]
+	filePath := TmpDir + pathVar
 
 	if r.Method == "POST" {
-		err := os.WriteFile(f, []byte(val["name"]), 0644)
+		err := os.WriteFile(filePath, []byte(pathVar), 0644)
 		if err != nil {
-			s.Logger.Printf("error writing file at path %s: %v\n", f, err)
-			return s.BuildResponse(500, TextPlain, "the requested file was not created")
+			s.Logger.Printf("error writing file at path %s: %v\n", filePath, err)
+			return s.BuildResponse(500, TextPlain, "", "the requested file was not created")
 		}
-		sc = 201
+		code = 201
 	}
 
-	data, err := os.ReadFile(f)
+	data, err := os.ReadFile(filePath)
 	if err != nil {
-		s.Logger.Printf("error reading file at path %s: %v\n", f, err)
-		return s.BuildResponse(404, TextPlain, "the requested file was not found")
+		s.Logger.Printf("error reading file at path %s: %v\n", filePath, err)
+		return s.BuildResponse(404, TextPlain, "", "the requested file was not found")
 	}
 
-	return s.BuildResponse(sc, OctetStream, string(data))
+	return s.BuildResponse(code, OctetStream, "", string(data))
+}
+
+func (s *Server) getCompressionSchemes() []string {
+	return []string{"gzip"}
 }
