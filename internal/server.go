@@ -10,10 +10,10 @@ import (
 	"strings"
 )
 
-type PathParamKey string
+type PathParamContextKey string
 
 const (
-	PathParam PathParamKey = "pathParams"
+	CustomPathParamKey PathParamContextKey = "pathParams"
 )
 
 type Handler func(r *http.Request) (string, error)
@@ -36,9 +36,11 @@ func NewServer(logger *log.Logger) *Server {
 func (s *Server) Start(protocol, port string) {
 	listener, err := net.Listen(protocol, port)
 	if err != nil {
-		panic(err) // panicking here because server shouldn't run if listener isn't created.
+		panic(err)
 	}
 	defer listener.Close()
+
+	s.Logger.Printf("HTTP Server has started and listening on port %s", port)
 
 	for {
 		conn, err := listener.Accept()
@@ -57,7 +59,8 @@ func (s *Server) HandleConnection(conn net.Conn) {
 	if err != nil {
 		msg := fmt.Sprintf("error reading request: %v", err)
 		s.Logger.Printf(msg)
-		conn.Write([]byte("HTTP/1.1 400 Bad Request\r\n\r\n " + msg))
+		res := HttpResponseBuilder(404, TextPlain, "", msg)
+		s.WriteToClient(conn, res)
 		return
 	}
 
@@ -65,19 +68,22 @@ func (s *Server) HandleConnection(conn net.Conn) {
 	if handler == nil {
 		msg := fmt.Sprintf("the requested resource %s is not supported", req.URL.Path)
 		s.Logger.Printf(msg)
-		conn.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n " + msg))
+		res := HttpResponseBuilder(404, TextPlain, "", msg)
+		s.WriteToClient(conn, res)
 		return
 	}
 
 	res, err := handler(req)
 	if err != nil {
-		_, err = conn.Write([]byte(res))
-		if err != nil {
-			s.Logger.Printf("error writing response: %v\n", err)
-			return
-		}
+		s.WriteToClient(conn, res)
 	}
 	return
+}
+
+func (s *Server) WriteToClient(conn net.Conn, res string) {
+	if _, err := conn.Write([]byte(res)); err != nil {
+		s.Logger.Printf("error writing response: %v\n", err)
+	}
 }
 
 func (s *Server) RegisterRoutes() {
@@ -125,7 +131,7 @@ func (s *Server) DetermineHandler(req *http.Request) Handler {
 			}
 		}
 		if match {
-			ctx := context.WithValue(req.Context(), PathParam, pathParams)
+			ctx := context.WithValue(req.Context(), CustomPathParamKey, pathParams)
 			*req = *req.WithContext(ctx)
 			return route.handler
 		}

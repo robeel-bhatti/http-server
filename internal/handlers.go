@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"slices"
-	"strconv"
 	"strings"
 )
 
@@ -18,16 +17,16 @@ const (
 )
 
 func DefaultHandler(r *http.Request) (string, error) {
-	return httpResponseBuilder(200, TextPlain, "", ""), nil
+	return HttpResponseBuilder(200, TextPlain, "", ""), nil
 }
 
 func UserAgentHandler(r *http.Request) (string, error) {
 	headerValue := r.Header.Get("User-Agent")
-	return httpResponseBuilder(200, TextPlain, "", headerValue), nil
+	return HttpResponseBuilder(200, TextPlain, "", headerValue), nil
 }
 
 func EchoHandler(r *http.Request) (string, error) {
-	pv := r.Context().Value(PathParam).(map[string]string)["name"]
+	pv := r.Context().Value(CustomPathParamKey).(map[string]string)["name"]
 
 	var ce string
 	if r.Header.Get("Accept-Encoding") != "" {
@@ -40,12 +39,12 @@ func EchoHandler(r *http.Request) (string, error) {
 			}
 		}
 	}
-	return httpResponseBuilder(200, TextPlain, ce, pv), nil
+	return HttpResponseBuilder(200, TextPlain, ce, pv), nil
 }
 
 func FilesHandler(r *http.Request) (string, error) {
 	code := 200
-	pathVar := r.Context().Value(PathParam).(map[string]string)["name"]
+	pathVar := r.Context().Value(CustomPathParamKey).(map[string]string)["name"]
 	filePath := TmpDir + pathVar
 
 	if r.Method == "POST" {
@@ -61,28 +60,28 @@ func FilesHandler(r *http.Request) (string, error) {
 		return "", nil
 	}
 
-	return httpResponseBuilder(code, OctetStream, "", string(data)), nil
+	return HttpResponseBuilder(code, OctetStream, "", string(data)), nil
 }
 
-func httpResponseBuilder(statusCode int, contentType, contentEncoding, body string) string {
-	var sb strings.Builder
-
-	sb.WriteString(HttpProtocol + " " + strconv.Itoa(statusCode) + " " + http.StatusText(statusCode))
-	sb.WriteString("\r\n")
-	sb.WriteString("Content-Type: " + contentType)
-	sb.WriteString("\r\n")
-
-	if contentEncoding != "" {
-		body = compressHttpBody(contentEncoding, body)
-		sb.WriteString("Content-Encoding: " + contentEncoding)
-		sb.WriteString("\r\n")
-	}
-
-	sb.WriteString("Content-Length: " + strconv.Itoa(len(body)))
-	sb.WriteString("\r\n\r\n")
-	sb.WriteString(body)
-	return sb.String()
-}
+//func HttpResponseBuilder(statusCode int, contentType, contentEncoding, body string) string {
+//	var sb strings.Builder
+//
+//	sb.WriteString(HttpProtocol + " " + strconv.Itoa(statusCode) + " " + http.StatusText(statusCode))
+//	sb.WriteString("\r\n")
+//	sb.WriteString("Content-Type: " + contentType)
+//	sb.WriteString("\r\n")
+//
+//	if contentEncoding != "" {
+//		body = compressHttpBody(contentEncoding, body)
+//		sb.WriteString("Content-Encoding: " + contentEncoding)
+//		sb.WriteString("\r\n")
+//	}
+//
+//	sb.WriteString("Content-Length: " + strconv.Itoa(len(body)))
+//	sb.WriteString("\r\n\r\n")
+//	sb.WriteString(body)
+//	return sb.String()
+//}
 
 func compressHttpBody(contentEncoding, body string) string {
 	if contentEncoding == "gzip" {

@@ -16,5 +16,4 @@ func main() {
 	s := internal.NewServer(logger)
 	s.RegisterRoutes()
 	s.Start(TransportProtocol, Port)
-	s.Logger.Printf("HTTP Server has started and listening on port %s", Port)
 }
