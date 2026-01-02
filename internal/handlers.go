@@ -1,8 +1,7 @@
 package internal
 
 import (
-	"bytes"
-	"compress/gzip"
+	"io"
 	"net/http"
 	"os"
 	"slices"
@@ -16,84 +15,70 @@ const (
 	TmpDir       = "tmp/"
 )
 
-func DefaultHandler(r *http.Request) (string, error) {
-	return HttpResponseBuilder(200, TextPlain, "", ""), nil
+func DefaultHandler(r *http.Request) *ResponseEntity {
+	return &ResponseEntity{
+		statusCode: http.StatusOK,
+		headers:    NewHttpHeader(TextPlain, "", len("")),
+		body:       "",
+		err:        nil,
+	}
 }
 
-func UserAgentHandler(r *http.Request) (string, error) {
+func UserAgentHandler(r *http.Request) *ResponseEntity {
 	headerValue := r.Header.Get("User-Agent")
-	return HttpResponseBuilder(200, TextPlain, "", headerValue), nil
+	return &ResponseEntity{
+		statusCode: http.StatusOK,
+		headers:    NewHttpHeader(TextPlain, "", len(headerValue)),
+		body:       headerValue,
+		err:        nil,
+	}
 }
 
-func EchoHandler(r *http.Request) (string, error) {
-	pv := r.Context().Value(CustomPathParamKey).(map[string]string)["name"]
-
+func EchoHandler(r *http.Request) *ResponseEntity {
+	pv := getPathParam(r, "name")
 	var ce string
+
 	if r.Header.Get("Accept-Encoding") != "" {
 		ae := r.Header.Get("Accept-Encoding")
 		aeList := strings.Split(ae, ", ")
+		validSchemes := []string{"gzip"}
+
 		for _, scheme := range aeList {
-			if slices.Contains(getCompressionSchemes(), scheme) {
+			if slices.Contains(validSchemes, scheme) {
 				ce = scheme
 				break
 			}
 		}
 	}
-	return HttpResponseBuilder(200, TextPlain, ce, pv), nil
+
+	return &ResponseEntity{
+		statusCode: http.StatusOK,
+		headers:    NewHttpHeader(TextPlain, ce, len(pv)),
+		body:       pv,
+		err:        nil,
+	}
 }
 
-func FilesHandler(r *http.Request) (string, error) {
-	code := 200
-	pathVar := r.Context().Value(CustomPathParamKey).(map[string]string)["name"]
-	filePath := TmpDir + pathVar
+func FilesHandler(r *http.Request) *ResponseEntity {
+	fp := TmpDir + getPathParam(r, "name")
 
-	if r.Method == "POST" {
-		err := os.WriteFile(filePath, []byte(pathVar), 0644)
-		if err != nil {
-			return "", err
+	if r.Method == "GET" {
+		data, err := os.ReadFile(fp)
+		d := string(data)
+		return &ResponseEntity{
+			statusCode: 200,
+			headers:    NewHttpHeader(OctetStream, "", len(d)),
+			body:       d,
+			err:        err,
 		}
-		code = 201
+	} else {
+		reqBytes, err := io.ReadAll(r.Body)
+		err = os.WriteFile(fp, reqBytes, 0644)
+		return &ResponseEntity{
+			statusCode: 201,
+			headers:    NewHttpHeader(OctetStream, "", len("")),
+			body:       "",
+			err:        err,
+		}
 	}
-
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return "", nil
-	}
-
-	return HttpResponseBuilder(code, OctetStream, "", string(data)), nil
-}
-
-//func HttpResponseBuilder(statusCode int, contentType, contentEncoding, body string) string {
-//	var sb strings.Builder
-//
-//	sb.WriteString(HttpProtocol + " " + strconv.Itoa(statusCode) + " " + http.StatusText(statusCode))
-//	sb.WriteString("\r\n")
-//	sb.WriteString("Content-Type: " + contentType)
-//	sb.WriteString("\r\n")
-//
-//	if contentEncoding != "" {
-//		body = compressHttpBody(contentEncoding, body)
-//		sb.WriteString("Content-Encoding: " + contentEncoding)
-//		sb.WriteString("\r\n")
-//	}
-//
-//	sb.WriteString("Content-Length: " + strconv.Itoa(len(body)))
-//	sb.WriteString("\r\n\r\n")
-//	sb.WriteString(body)
-//	return sb.String()
-//}
-
-func compressHttpBody(contentEncoding, body string) string {
-	if contentEncoding == "gzip" {
-		var buf bytes.Buffer
-		w := gzip.NewWriter(&buf)
-		w.Write([]byte(body))
-		w.Close()
-		return buf.String()
-	}
-	return body
-}
-
-func getCompressionSchemes() []string {
-	return []string{"gzip"}
 }

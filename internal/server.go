@@ -48,7 +48,7 @@ func (s *Server) Start(protocol, port string) {
 			s.Logger.Printf("error accepting request: %v\n", err)
 			continue // this time just log and continue, don't stop server here
 		}
-		s.HandleConnection(conn)
+		go s.HandleConnection(conn)
 	}
 }
 
@@ -75,8 +75,10 @@ func (s *Server) HandleConnection(conn net.Conn) {
 
 	res, err := handler(req)
 	if err != nil {
-		s.WriteToClient(conn, res)
+		res = HttpResponseBuilder(500)
+		s.WriteToClient(conn)
 	}
+	s.WriteToClient(conn, res)
 	return
 }
 
