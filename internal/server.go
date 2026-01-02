@@ -7,20 +7,11 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
 type PathParamContextKey string
-
-const (
-	Port                                   = ":8080"
-	TransportProtocol                      = "tcp"
-	CustomPathParamKey PathParamContextKey = "pathParams"
-	TextPlain                              = "text/plain"
-	OctetStream                            = "application/octet-stream"
-	HttpProtocol                           = "HTTP/1.1"
-	TmpDir                                 = "tmp/"
-)
 
 type Handler func(r *http.Request) *ResponseEntity
 
@@ -33,6 +24,18 @@ type Route struct {
 type Server struct {
 	Logger *log.Logger
 	Routes []*Route
+}
+
+type ResponseEntity struct {
+	StatusCode int
+	Headers    *HttpHeader
+	Body       string
+}
+
+type HttpHeader struct {
+	ContentType     string
+	ContentEncoding string
+	ContentLength   string
 }
 
 func NewServer(logger *log.Logger) *Server {
@@ -63,10 +66,9 @@ func (s *Server) HandleConnection(conn net.Conn) {
 
 	req, err := http.ReadRequest(bufio.NewReader(conn))
 	if err != nil {
-		msg := fmt.Sprintf("error reading request: %v", err)
-		s.Logger.Printf(msg)
-		res := HttpResponseBuilder(404, TextPlain, "", msg)
-		s.WriteToClient(conn, res)
+		s.Logger.Printf("error reading request: %v", err)
+		re := NewResponseEntity(http.StatusInternalServerError, TextPlain, "", "unexpected error occurred")
+		s.BuildAndSendResponse(conn, re)
 		return
 	}
 
@@ -74,24 +76,15 @@ func (s *Server) HandleConnection(conn net.Conn) {
 	if handler == nil {
 		msg := fmt.Sprintf("the requested resource %s is not supported", req.URL.Path)
 		s.Logger.Printf(msg)
-		res := HttpResponseBuilder(404, TextPlain, "", msg)
-		s.WriteToClient(conn, res)
+		re := NewResponseEntity(http.StatusNotFound, TextPlain, "", msg)
+		s.BuildAndSendResponse(conn, re)
 		return
 	}
 
-	res, err := handler(req)
-	if err != nil {
-		res = HttpResponseBuilder(500)
-		s.WriteToClient(conn)
-	}
-	s.WriteToClient(conn, res)
+	SetLogger(s.Logger)
+	re := handler(req)
+	s.BuildAndSendResponse(conn, re)
 	return
-}
-
-func (s *Server) WriteToClient(conn net.Conn, res string) {
-	if _, err := conn.Write([]byte(res)); err != nil {
-		s.Logger.Printf("error writing response: %v\n", err)
-	}
 }
 
 func (s *Server) RegisterRoutes() {
@@ -145,4 +138,43 @@ func (s *Server) DetermineHandler(req *http.Request) Handler {
 		}
 	}
 	return nil
+}
+
+func (s *Server) BuildAndSendResponse(conn net.Conn, re *ResponseEntity) {
+	var sb strings.Builder
+
+	sb.WriteString(HttpProtocol + " " + strconv.Itoa(re.StatusCode) + " " + http.StatusText(re.StatusCode))
+	sb.WriteString("\r\n")
+	sb.WriteString("Content-Type: " + re.Headers.ContentType)
+	sb.WriteString("\r\n")
+	sb.WriteString("Content-Length: " + re.Headers.ContentLength)
+	sb.WriteString("\r\n")
+
+	if re.Headers.ContentEncoding != "" {
+		sb.WriteString("Content-Encoding: " + re.Headers.ContentEncoding)
+		sb.WriteString("\r\n")
+	}
+
+	sb.WriteString("\r\n\r\n")
+	sb.WriteString(re.Body)
+
+	if _, err := conn.Write([]byte(sb.String())); err != nil {
+		s.Logger.Printf("error writing response: %v\n", err)
+	}
+}
+
+func NewResponseEntity(sc int, ct, ce, body string) *ResponseEntity {
+	return &ResponseEntity{
+		StatusCode: sc,
+		Headers:    NewHttpHeader(ct, ce, len(body)),
+		Body:       body,
+	}
+}
+
+func NewHttpHeader(ct, ce string, cl int) *HttpHeader {
+	return &HttpHeader{
+		ContentType:     ct,
+		ContentEncoding: ce,
+		ContentLength:   strconv.Itoa(cl),
+	}
 }

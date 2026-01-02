@@ -35,7 +35,7 @@ func GetEchoStringHandler(r *http.Request) *ResponseEntity {
 	ce := selectEncoding(r.Header.Get("Accept-Encoding"))
 	b, err := compressBody(pv, ce)
 	if err != nil {
-		logger.Printf("error compressing body: %v", err)
+		logger.Printf("error compressing Body: %v", err)
 		ce = ""
 		b = "unexpected error occurred"
 	}
@@ -72,7 +72,7 @@ func WriteFileHandler(r *http.Request) *ResponseEntity {
 	fp := TmpDir + pv
 	b, err := io.ReadAll(r.Body)
 	if err != nil {
-		logger.Printf("error occurred reading request body: %v", err)
+		logger.Printf("error occurred reading request Body: %v", err)
 		return NewResponseEntity(http.StatusInternalServerError, TextPlain, "", "unexpected error occurred")
 	}
 
