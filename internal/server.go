@@ -13,10 +13,16 @@ import (
 type PathParamContextKey string
 
 const (
+	Port                                   = ":8080"
+	TransportProtocol                      = "tcp"
 	CustomPathParamKey PathParamContextKey = "pathParams"
+	TextPlain                              = "text/plain"
+	OctetStream                            = "application/octet-stream"
+	HttpProtocol                           = "HTTP/1.1"
+	TmpDir                                 = "tmp/"
 )
 
-type Handler func(r *http.Request) (string, error)
+type Handler func(r *http.Request) *ResponseEntity
 
 type Route struct {
 	handler Handler
@@ -33,14 +39,14 @@ func NewServer(logger *log.Logger) *Server {
 	return &Server{Logger: logger}
 }
 
-func (s *Server) Start(protocol, port string) {
-	listener, err := net.Listen(protocol, port)
+func (s *Server) Start() {
+	listener, err := net.Listen(TransportProtocol, Port)
 	if err != nil {
 		panic(err)
 	}
 	defer listener.Close()
 
-	s.Logger.Printf("HTTP Server has started and listening on port %s", port)
+	s.Logger.Printf("HTTP Server has started and listening on port %s", Port)
 
 	for {
 		conn, err := listener.Accept()
@@ -90,10 +96,10 @@ func (s *Server) WriteToClient(conn net.Conn, res string) {
 
 func (s *Server) RegisterRoutes() {
 	s.AddRoute("GET", "/", DefaultHandler)
-	s.AddRoute("GET", "/echo/:name", EchoHandler)
-	s.AddRoute("GET", "/user-agent", UserAgentHandler)
-	s.AddRoute("GET", "/files/:name", FilesHandler)
-	s.AddRoute("POST", "/files/:name", FilesHandler)
+	s.AddRoute("GET", "/echo/:name", GetEchoStringHandler)
+	s.AddRoute("GET", "/user-agent", GetUserAgentHandler)
+	s.AddRoute("GET", "/files/:name", ReadFileHandler)
+	s.AddRoute("POST", "/files/:name", WriteFileHandler)
 }
 
 func (s *Server) AddRoute(method, pattern string, handler Handler) {

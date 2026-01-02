@@ -1,12 +1,16 @@
 package internal
 
 import (
-	"bytes"
-	"compress/gzip"
 	"net/http"
 	"strconv"
 	"strings"
 )
+
+type ResponseEntity struct {
+	statusCode int
+	headers    *HttpHeader
+	body       string
+}
 
 type HttpHeader struct {
 	ContentType     string
@@ -14,11 +18,12 @@ type HttpHeader struct {
 	ContentLength   string
 }
 
-type ResponseEntity struct {
-	statusCode int
-	headers    *HttpHeader
-	body       string
-	err        error
+func NewResponseEntity(sc int, ct, ce, body string) *ResponseEntity {
+	return &ResponseEntity{
+		statusCode: sc,
+		headers:    NewHttpHeader(ct, ce, len(body)),
+		body:       body,
+	}
 }
 
 func NewHttpHeader(ct, ce string, cl int) *HttpHeader {
@@ -47,20 +52,4 @@ func HttpResponseBuilder(statusCode int, contentType, contentEncoding, body stri
 	sb.WriteString("\r\n\r\n")
 	sb.WriteString(body)
 	return sb.String()
-}
-
-func compressHttpBody(contentEncoding, body string) string {
-	if contentEncoding == "gzip" {
-		var buf bytes.Buffer
-		w := gzip.NewWriter(&buf)
-		w.Write([]byte(body))
-		w.Close()
-		return buf.String()
-	}
-	return body
-}
-
-func getPathParam(r *http.Request, key string) string {
-	pathParamMap := r.Context().Value(CustomPathParamKey).(map[string]string)
-	return pathParamMap[key]
 }

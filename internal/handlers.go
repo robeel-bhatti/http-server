@@ -1,84 +1,128 @@
 package internal
 
 import (
+	"bytes"
+	"compress/flate"
+	"compress/gzip"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"slices"
 	"strings"
 )
 
-const (
-	TextPlain    = "text/plain"
-	OctetStream  = "application/octet-stream"
-	HttpProtocol = "HTTP/1.1"
-	TmpDir       = "tmp/"
-)
+var logger *log.Logger
+var compressionSchemes = []string{"gzip", "deflate"}
+
+func SetLogger(l *log.Logger) {
+	logger = l
+}
 
 func DefaultHandler(r *http.Request) *ResponseEntity {
-	return &ResponseEntity{
-		statusCode: http.StatusOK,
-		headers:    NewHttpHeader(TextPlain, "", len("")),
-		body:       "",
-		err:        nil,
-	}
+	logger.Println("DefaultHandler called")
+	return NewResponseEntity(http.StatusOK, TextPlain, "", "")
 }
 
-func UserAgentHandler(r *http.Request) *ResponseEntity {
-	headerValue := r.Header.Get("User-Agent")
-	return &ResponseEntity{
-		statusCode: http.StatusOK,
-		headers:    NewHttpHeader(TextPlain, "", len(headerValue)),
-		body:       headerValue,
-		err:        nil,
-	}
+func GetUserAgentHandler(r *http.Request) *ResponseEntity {
+	logger.Println("GetUserAgentHandler called")
+	return NewResponseEntity(http.StatusOK, TextPlain, "", r.Header.Get("User-Agent"))
 }
 
-func EchoHandler(r *http.Request) *ResponseEntity {
+func GetEchoStringHandler(r *http.Request) *ResponseEntity {
+	logger.Println("GetEchoStringHandler called")
 	pv := getPathParam(r, "name")
-	var ce string
+	ce := selectEncoding(r.Header.Get("Accept-Encoding"))
+	b, err := compressBody(pv, ce)
+	if err != nil {
+		logger.Printf("error compressing body: %v", err)
+		ce = ""
+		b = "unexpected error occurred"
+	}
+	return NewResponseEntity(http.StatusOK, TextPlain, ce, b)
+}
 
-	if r.Header.Get("Accept-Encoding") != "" {
-		ae := r.Header.Get("Accept-Encoding")
-		aeList := strings.Split(ae, ", ")
-		validSchemes := []string{"gzip"}
+func ReadFileHandler(r *http.Request) *ResponseEntity {
+	logger.Println("ReadFileHandler called")
 
-		for _, scheme := range aeList {
-			if slices.Contains(validSchemes, scheme) {
-				ce = scheme
-				break
-			}
-		}
+	pv := getPathParam(r, "pv")
+	if !validFileName(pv) {
+		logger.Printf("invalid file pv in request: %s", pv)
+		return NewResponseEntity(http.StatusBadRequest, TextPlain, "", "invalid file pv provided")
 	}
 
-	return &ResponseEntity{
-		statusCode: http.StatusOK,
-		headers:    NewHttpHeader(TextPlain, ce, len(pv)),
-		body:       pv,
-		err:        nil,
+	fp := TmpDir + pv
+	d, err := os.ReadFile(fp)
+	if err != nil {
+		logger.Printf("error reading file %s: %v", fp, err)
+		return NewResponseEntity(http.StatusNotFound, TextPlain, "", "file not found")
+	}
+	return NewResponseEntity(http.StatusOK, OctetStream, "", string(d))
+}
+
+func WriteFileHandler(r *http.Request) *ResponseEntity {
+	logger.Println("WriteFileHandler called")
+
+	pv := getPathParam(r, "pv")
+	if !validFileName(pv) {
+		logger.Printf("invalid file pv in request: %s", pv)
+		return NewResponseEntity(http.StatusBadRequest, TextPlain, "", "invalid file pv provided")
+	}
+
+	fp := TmpDir + pv
+	b, err := io.ReadAll(r.Body)
+	if err != nil {
+		logger.Printf("error occurred reading request body: %v", err)
+		return NewResponseEntity(http.StatusInternalServerError, TextPlain, "", "unexpected error occurred")
+	}
+
+	err = os.WriteFile(fp, b, 0644)
+	if err != nil {
+		logger.Printf("error occurred writing file at path %s: %v", fp, err)
+		return NewResponseEntity(http.StatusInternalServerError, TextPlain, "", "unexpected error occurred")
+	}
+	return NewResponseEntity(http.StatusCreated, OctetStream, "", "")
+}
+
+func selectEncoding(ae string) string {
+	if ae == "" {
+		return ""
+	}
+	schemes := strings.Split(ae, ",")
+	for _, scheme := range schemes {
+		scheme = strings.TrimSpace(scheme)
+		if slices.Contains(compressionSchemes, scheme) {
+			return scheme
+		}
+	}
+	return ""
+}
+
+func compressBody(b, ce string) (string, error) {
+	var buffer bytes.Buffer
+
+	switch ce {
+	case "gzip":
+		gw := gzip.NewWriter(&buffer)
+		_, err := gw.Write([]byte(b))
+		return buffer.String(), err
+	case "deflate":
+		fw, _ := flate.NewWriter(&buffer, -1)
+		_, err := fw.Write([]byte(b))
+		return buffer.String(), err
+	default:
+		return "", nil
 	}
 }
 
-func FilesHandler(r *http.Request) *ResponseEntity {
-	fp := TmpDir + getPathParam(r, "name")
-
-	if r.Method == "GET" {
-		data, err := os.ReadFile(fp)
-		d := string(data)
-		return &ResponseEntity{
-			statusCode: 200,
-			headers:    NewHttpHeader(OctetStream, "", len(d)),
-			body:       d,
-			err:        err,
-		}
-	} else {
-		reqBytes, err := io.ReadAll(r.Body)
-		err = os.WriteFile(fp, reqBytes, 0644)
-		return &ResponseEntity{
-			statusCode: 201,
-			headers:    NewHttpHeader(OctetStream, "", len("")),
-			body:       "",
-			err:        err,
-		}
+func validFileName(name string) bool {
+	if name == "" || strings.Contains(name, "..") { // ".." check to prevent path traversals
+		return false
 	}
+	return true
+}
+
+func getPathParam(r *http.Request, key string) string {
+	pathParamMap := r.Context().Value(CustomPathParamKey).(map[string]string)
+	return pathParamMap[key]
 }
