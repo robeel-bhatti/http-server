@@ -22,4 +22,4 @@ I gained a firm understanding of:
 
 # Running Locally
 
-TODO: fill this out!!
+Run `run.sh`
