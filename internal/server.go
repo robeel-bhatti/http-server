@@ -156,7 +156,9 @@ func (s *Server) BuildAndSendResponse(conn net.Conn, re *ResponseEntity) {
 	}
 
 	sb.WriteString("\r\n\r\n")
-	sb.WriteString(re.Body)
+	if re.Body != "" {
+		sb.WriteString(re.Body)
+	}
 
 	if _, err := conn.Write([]byte(sb.String())); err != nil {
 		s.Logger.Printf("error writing response: %v\n", err)

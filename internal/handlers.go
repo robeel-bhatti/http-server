@@ -104,14 +104,24 @@ func compressBody(b, ce string) (string, error) {
 	switch ce {
 	case "gzip":
 		gw := gzip.NewWriter(&buffer)
-		_, err := gw.Write([]byte(b))
-		return buffer.String(), err
+		if _, err := gw.Write([]byte(b)); err != nil {
+			return "", err
+		}
+		if err := gw.Close(); err != nil {
+			return "", err
+		}
+		return buffer.String(), nil
 	case "deflate":
 		fw, _ := flate.NewWriter(&buffer, -1)
-		_, err := fw.Write([]byte(b))
-		return buffer.String(), err
+		if _, err := fw.Write([]byte(b)); err != nil {
+			return "", err
+		}
+		if err := fw.Close(); err != nil {
+			return "", err
+		}
+		return buffer.String(), nil
 	default:
-		return "", nil
+		return b, nil
 	}
 }
 

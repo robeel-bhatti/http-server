@@ -19,3 +19,7 @@ I gained a firm understanding of:
     - Clean, non-verbose syntax with straightforward error handling (no abstractions)
     - Pointers teach you how objects are managed in memory, enabling you to build performance-intensive applications through deliberate memory management
     - Performance: Go compiles directly to machine code, so the CPU executes raw instructions without any interpreter or VM overhead.
+
+# Running Locally
+
+TODO: fill this out!!
